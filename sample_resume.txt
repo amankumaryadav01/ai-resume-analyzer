@@ -1,0 +1,36 @@
+Rahul Sharma
+
+Email: rahul@gmail.com
+Phone: +91-9876543210
+
+Education
+B.Tech Computer Science
+ABC University
+2021-2025
+
+Skills
+Python
+C++
+SQL
+Machine Learning
+Git
+Data Structures
+
+Projects
+
+AI Chatbot using Groq API
+Built a chatbot using Python and Groq Llama Model.
+
+Resume Analyzer
+Developed an AI-powered Resume Analyzer using Python.
+
+Experience
+
+Python Intern
+XYZ Technologies
+Jan 2025 - June 2025
+
+Certifications
+
+Python Programming
+Machine Learning

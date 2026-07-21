@@ -1,0 +1,24 @@
+Python Backend Developer
+
+Requirements
+
+• Python
+• SQL
+• Git
+• Docker
+• AWS
+• REST API
+• Machine Learning
+• Data Structures
+
+Responsibilities
+
+Develop scalable backend systems.
+
+Work with Docker containers.
+
+Deploy applications on AWS.
+
+Design REST APIs.
+
+Collaborate with development teams.
