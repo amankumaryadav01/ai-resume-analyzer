@@ -5,3 +5,6 @@ openpyxl
 Pillow
 python-dotenv
 groq
+pypdf
+python-docx
+reportlab
