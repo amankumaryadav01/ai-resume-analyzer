@@ -4,3 +4,4 @@ plotly
 openpyxl
 Pillow
 python-dotenv
+groq
