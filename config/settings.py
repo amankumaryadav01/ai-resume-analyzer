@@ -18,7 +18,7 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 # LLM CONFIGURATION
 # ============================================================
 
-MODEL = "llama-3.3-70b-versatile"
+MODEL = "openai/gpt-oss-120b"
 
 
 # ============================================================

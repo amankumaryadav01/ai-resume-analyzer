@@ -315,33 +315,33 @@ with col_b:
             unsafe_allow_html=True,
         )
 
-        st.components.v1.html(
-            """
-            <script>
-            (function() {
-                const MIN_H = 130, MAX_H = 640;
-                function resize(ta) {
-                    ta.style.height = 'auto';
-                    const h = Math.min(Math.max(ta.scrollHeight + 4, MIN_H), MAX_H);
-                    ta.style.height = h + 'px';
-                    ta.style.overflowY = ta.scrollHeight > MAX_H ? 'auto' : 'hidden';
-                }
-                function attach() {
-                    const doc = window.parent.document;
-                    const ta = doc.querySelector('textarea[aria-label="Job description"]');
-                    if (!ta) { setTimeout(attach, 250); return; }
-                    resize(ta);
-                    if (ta.dataset.autogrowAttached) return;
-                    ta.dataset.autogrowAttached = "true";
-                    ta.addEventListener('input', function() { resize(ta); });
-                    new ResizeObserver(function() { resize(ta); }).observe(ta);
-                }
-                attach();
-            })();
-            </script>
-            """,
-            height=0,
-        )
+        # st.components.v1.html(
+        #     """
+        #     <script>
+        #     (function() {
+        #         const MIN_H = 130, MAX_H = 640;
+        #         function resize(ta) {
+        #             ta.style.height = 'auto';
+        #             const h = Math.min(Math.max(ta.scrollHeight + 4, MIN_H), MAX_H);
+        #             ta.style.height = h + 'px';
+        #             ta.style.overflowY = ta.scrollHeight > MAX_H ? 'auto' : 'hidden';
+        #         }
+        #         function attach() {
+        #             const doc = window.parent.document;
+        #             const ta = doc.querySelector('textarea[aria-label="Job description"]');
+        #             if (!ta) { setTimeout(attach, 250); return; }
+        #             resize(ta);
+        #             if (ta.dataset.autogrowAttached) return;
+        #             ta.dataset.autogrowAttached = "true";
+        #             ta.addEventListener('input', function() { resize(ta); });
+        #             new ResizeObserver(function() { resize(ta); }).observe(ta);
+        #         }
+        #         attach();
+        #     })();
+        #     </script>
+        #     """,
+        #     height=0,
+        # )
 
 st.write("")
 _, mid, _ = st.columns([1, 1.2, 1])

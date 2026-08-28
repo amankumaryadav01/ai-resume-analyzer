@@ -1,20 +1,25 @@
 ﻿"""
 report_service.py
 
-Builds downloadable PDF and DOCX versions of:
-1. ATS Diagnostic Report
-2. Optimized Resume
+Generates:
+1. ATS diagnostic PDF
+2. ATS diagnostic DOCX
+3. Optimized Resume PDF
+4. Optimized Resume DOCX
+
+The optimized resume PDF/DOCX uses the SAME optimized dictionary
+that is displayed in Streamlit. No second AI generation happens here.
 """
 
 import io
-import html
+import functools
 from datetime import datetime
 
 from reportlab.lib.pagesizes import LETTER
 from reportlab.lib.units import inch, cm
 from reportlab.lib import colors
-from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
-from reportlab.lib.enums import TA_CENTER, TA_LEFT
+from reportlab.lib.styles import ParagraphStyle
+from reportlab.lib.enums import TA_CENTER
 from reportlab.platypus import (
     SimpleDocTemplate,
     Paragraph,
@@ -38,12 +43,11 @@ BRAND_NAME = "AI Resume Copilot"
 REPORT_TITLE = "ATS Diagnostic Report"
 
 
-# =====================================================================
+# ============================================================
 # COMMON HELPERS
-# =====================================================================
+# ============================================================
 
 def _band_color_hex(value: int) -> str:
-    """0-40 red / 40-70 amber / 70-100 green."""
     if value >= 70:
         return "#1FAE6B"
     if value >= 40:
@@ -61,6 +65,7 @@ def _build_styles(body_font, bold_font):
             "BrandTitle",
             fontName=bold_font,
             fontSize=26,
+            leading=31,
             textColor=colors.HexColor("#14161B"),
             alignment=TA_CENTER,
             spaceAfter=6,
@@ -69,6 +74,7 @@ def _build_styles(body_font, bold_font):
             "Subtitle",
             fontName=body_font,
             fontSize=13,
+            leading=17,
             textColor=colors.HexColor("#6366F1"),
             alignment=TA_CENTER,
         ),
@@ -76,6 +82,7 @@ def _build_styles(body_font, bold_font):
             "Section",
             fontName=bold_font,
             fontSize=14,
+            leading=18,
             textColor=colors.HexColor("#14161B"),
             spaceBefore=6,
             spaceAfter=8,
@@ -91,6 +98,7 @@ def _build_styles(body_font, bold_font):
             "Muted",
             fontName=body_font,
             fontSize=10.5,
+            leading=14,
             textColor=colors.HexColor("#6B7280"),
         ),
     }
@@ -135,45 +143,57 @@ def _score_bar(value: int, width=380, height=16):
     return d
 
 
-def _bullets(items, styles, empty_text):
+def _bullets(items, styles, empty_text=""):
     if not items:
-        return [
-            Paragraph(
-                empty_text,
-                styles["Muted"],
-            )
-        ]
+        if empty_text:
+            return [Paragraph(empty_text, styles["Muted"])]
+        return []
 
     return [
         Paragraph(
-            f"•&nbsp;&nbsp;{html.escape(str(text))}",
+            f"•&nbsp;&nbsp;{str(text)}",
             styles["Body"],
         )
         for text in items
+        if str(text).strip()
     ]
 
 
-# =====================================================================
+# ============================================================
 # PAGE NUMBER CANVAS
-# =====================================================================
+# ============================================================
 
 class _NumberedCanvas(pdfcanvas.Canvas):
 
-    def __init__(self, *args, **kwargs):
-        pdfcanvas.Canvas.__init__(self, *args, **kwargs)
+    def __init__(self, *args, footer_label=None, **kwargs):
+        self._footer_label = (
+            footer_label
+            or f"{BRAND_NAME} — {REPORT_TITLE}"
+        )
+
+        pdfcanvas.Canvas.__init__(
+            self,
+            *args,
+            **kwargs,
+        )
+
         self._saved_page_states = []
 
     def showPage(self):
-        self._saved_page_states.append(dict(self.__dict__))
+        self._saved_page_states.append(
+            dict(self.__dict__)
+        )
         self._startPage()
 
     def save(self):
-        num_pages = len(self._saved_page_states)
+        page_count = len(
+            self._saved_page_states
+        )
 
         for state in self._saved_page_states:
             self.__dict__.update(state)
 
-            self._draw_footer(num_pages)
+            self._draw_footer(page_count)
 
             pdfcanvas.Canvas.showPage(self)
 
@@ -182,7 +202,11 @@ class _NumberedCanvas(pdfcanvas.Canvas):
     def _draw_footer(self, page_count):
         self.saveState()
 
-        self.setFont("Helvetica", 8)
+        self.setFont(
+            "Helvetica",
+            8,
+        )
+
         self.setFillColor(
             colors.HexColor("#9AA0AC")
         )
@@ -190,21 +214,21 @@ class _NumberedCanvas(pdfcanvas.Canvas):
         self.drawString(
             0.9 * inch,
             0.55 * inch,
-            f"{} — {}",
+            self._footer_label,
         )
 
         self.drawRightString(
             LETTER[0] - 0.9 * inch,
             0.55 * inch,
-            f"Page {self._pageNumber} of {}",
+            f"Page {self._pageNumber} of {page_count}",
         )
 
         self.restoreState()
 
 
-# =====================================================================
-# ATS REPORT PDF
-# =====================================================================
+# ============================================================
+# ATS DIAGNOSTIC PDF
+# ============================================================
 
 def generate_pdf_bytes(
     result: dict,
@@ -231,8 +255,13 @@ def generate_pdf_bytes(
 
     story = []
 
-    # TITLE PAGE
-    story.append(Spacer(1, 1.3 * inch))
+    # --------------------------------------------------------
+    # TITLE
+    # --------------------------------------------------------
+
+    story.append(
+        Spacer(1, 1.3 * inch)
+    )
 
     story.append(
         Paragraph(
@@ -248,7 +277,9 @@ def generate_pdf_bytes(
         )
     )
 
-    story.append(Spacer(1, 0.5 * inch))
+    story.append(
+        Spacer(1, 0.5 * inch)
+    )
 
     story.append(
         HRFlowable(
@@ -258,10 +289,19 @@ def generate_pdf_bytes(
         )
     )
 
-    story.append(Spacer(1, 0.35 * inch))
+    story.append(
+        Spacer(1, 0.35 * inch)
+    )
 
-    name = result.get("name") or "Candidate"
-    email = result.get("email") or "Not provided"
+    name = result.get(
+        "name",
+        "Candidate",
+    )
+
+    email = result.get(
+        "email",
+        "Not provided",
+    )
 
     generated = datetime.now().strftime(
         "%B %d, %Y  •  %I:%M %p"
@@ -269,9 +309,12 @@ def generate_pdf_bytes(
 
     meta_table = Table(
         [
-            ["Candidate", html.escape(str(name))],
-            ["Email", html.escape(str(email))],
-            ["Resume File", html.escape(str(resume_filename or "N/A"))],
+            ["Candidate", name],
+            ["Email", email],
+            [
+                "Resume File",
+                resume_filename or "N/A",
+            ],
             ["Generated", generated],
         ],
         colWidths=[
@@ -330,14 +373,30 @@ def generate_pdf_bytes(
     )
 
     story.append(meta_table)
+
     story.append(PageBreak())
 
+    # --------------------------------------------------------
     # OVERVIEW
-    ats = result.get("ats_score", 0)
-    match = result.get("match_percentage", 0)
+    # --------------------------------------------------------
 
-    matching = result.get("matching_skills") or []
-    missing = result.get("missing_skills") or []
+    ats = result.get(
+        "ats_score",
+        0,
+    )
+
+    match = result.get(
+        "match_percentage",
+        0,
+    )
+
+    matching = result.get(
+        "matching_skills"
+    ) or []
+
+    missing = result.get(
+        "missing_skills"
+    ) or []
 
     story.append(
         Paragraph(
@@ -348,25 +407,41 @@ def generate_pdf_bytes(
 
     story.append(
         Paragraph(
-            f"ATS Score — {}/100",
+            f"ATS Score — {ats}/100",
             styles["Body"],
         )
     )
 
-    story.append(Spacer(1, 4))
-    story.append(_score_bar(ats))
-    story.append(Spacer(1, 12))
+    story.append(
+        Spacer(1, 4)
+    )
+
+    story.append(
+        _score_bar(ats)
+    )
+
+    story.append(
+        Spacer(1, 12)
+    )
 
     story.append(
         Paragraph(
-            f"Match Percentage — {}%",
+            f"Match Percentage — {match}%",
             styles["Body"],
         )
     )
 
-    story.append(Spacer(1, 4))
-    story.append(_score_bar(match))
-    story.append(Spacer(1, 16))
+    story.append(
+        Spacer(1, 4)
+    )
+
+    story.append(
+        _score_bar(match)
+    )
+
+    story.append(
+        Spacer(1, 16)
+    )
 
     kpi_table = Table(
         [
@@ -378,7 +453,7 @@ def generate_pdf_bytes(
             ],
             [
                 str(ats),
-                f"{}%",
+                f"{match}%",
                 str(len(matching)),
                 str(len(missing)),
             ],
@@ -445,9 +520,15 @@ def generate_pdf_bytes(
     )
 
     story.append(kpi_table)
-    story.append(Spacer(1, 20))
 
+    story.append(
+        Spacer(1, 20)
+    )
+
+    # --------------------------------------------------------
     # AI SUMMARY
+    # --------------------------------------------------------
+
     story.append(
         Paragraph(
             "AI Summary",
@@ -455,16 +536,25 @@ def generate_pdf_bytes(
         )
     )
 
+    summary = result.get(
+        "summary"
+    ) or "No summary was generated for this scan."
+
     story.append(
         Paragraph(
-            html.escape(str(result.get("summary") or "No summary generated.")),
+            str(summary),
             styles["Body"],
         )
     )
 
-    story.append(Spacer(1, 16))
+    story.append(
+        Spacer(1, 16)
+    )
 
+    # --------------------------------------------------------
     # MATCHING SKILLS
+    # --------------------------------------------------------
+
     story.append(
         Paragraph(
             "Matching Skills",
@@ -480,9 +570,14 @@ def generate_pdf_bytes(
         )
     )
 
-    story.append(Spacer(1, 16))
+    story.append(
+        Spacer(1, 16)
+    )
 
+    # --------------------------------------------------------
     # MISSING SKILLS
+    # --------------------------------------------------------
+
     story.append(
         Paragraph(
             "Missing Skills",
@@ -494,13 +589,18 @@ def generate_pdf_bytes(
         _bullets(
             missing,
             styles,
-            "No missing skills.",
+            "No missing skills — full coverage.",
         )
     )
 
-    story.append(Spacer(1, 16))
+    story.append(
+        Spacer(1, 16)
+    )
 
+    # --------------------------------------------------------
     # STRENGTHS
+    # --------------------------------------------------------
+
     story.append(
         Paragraph(
             "Strengths",
@@ -516,9 +616,14 @@ def generate_pdf_bytes(
         )
     )
 
-    story.append(Spacer(1, 16))
+    story.append(
+        Spacer(1, 16)
+    )
 
+    # --------------------------------------------------------
     # WEAKNESSES
+    # --------------------------------------------------------
+
     story.append(
         Paragraph(
             "Weaknesses",
@@ -534,9 +639,14 @@ def generate_pdf_bytes(
         )
     )
 
-    story.append(Spacer(1, 16))
+    story.append(
+        Spacer(1, 16)
+    )
 
+    # --------------------------------------------------------
     # SUGGESTIONS
+    # --------------------------------------------------------
+
     story.append(
         Paragraph(
             "Suggestions",
@@ -544,22 +654,33 @@ def generate_pdf_bytes(
         )
     )
 
-    suggestions = result.get("suggestions") or []
+    suggestions = result.get(
+        "suggestions"
+    ) or []
 
     if suggestions:
-        for i, suggestion in enumerate(suggestions, start=1):
+
+        for i, suggestion in enumerate(
+            suggestions,
+            start=1,
+        ):
             story.append(
                 Paragraph(
-                    f"{}. {html.escape(str(suggestion))}",
+                    f"{i}. {suggestion}",
                     styles["Body"],
                 )
             )
-            story.append(Spacer(1, 4))
+
+            story.append(
+                Spacer(1, 4)
+            )
+
     else:
+
         story.append(
             Paragraph(
                 "None listed.",
-                styles["Muted"],
+                styles["Body"],
             )
         )
 
@@ -569,59 +690,163 @@ def generate_pdf_bytes(
     )
 
     buffer.seek(0)
+
     return buffer.getvalue()
 
 
-# =====================================================================
+# ============================================================
 # DOCX ATS REPORT
-# =====================================================================
+# ============================================================
 
 def _add_page_number_field(paragraph):
+
     run = paragraph.add_run()
 
-    fld_begin = OxmlElement("w:fldChar")
-    fld_begin.set(qn("w:fldCharType"), "begin")
+    fld_begin = OxmlElement(
+        "w:fldChar"
+    )
 
-    instr = OxmlElement("w:instrText")
-    instr.set(qn("xml:space"), "preserve")
+    fld_begin.set(
+        qn("w:fldCharType"),
+        "begin",
+    )
+
+    instr = OxmlElement(
+        "w:instrText"
+    )
+
+    instr.set(
+        qn("xml:space"),
+        "preserve",
+    )
+
     instr.text = "PAGE"
 
-    fld_end = OxmlElement("w:fldChar")
-    fld_end.set(qn("w:fldCharType"), "end")
+    fld_end = OxmlElement(
+        "w:fldChar"
+    )
 
-    run._r.append(fld_begin)
-    run._r.append(instr)
-    run._r.append(fld_end)
+    fld_end.set(
+        qn("w:fldCharType"),
+        "end",
+    )
+
+    run._r.append(
+        fld_begin
+    )
+
+    run._r.append(
+        instr
+    )
+
+    run._r.append(
+        fld_end
+    )
 
 
-def _set_cell_shading(cell, hex_color: str):
-    shd = OxmlElement("w:shd")
-    shd.set(qn("w:val"), "clear")
-    shd.set(qn("w:color"), "auto")
-    shd.set(qn("w:fill"), hex_color)
-    cell._tc.get_or_add_tcPr().append(shd)
+def _set_cell_shading(
+    cell,
+    hex_color: str,
+):
+
+    shd = OxmlElement(
+        "w:shd"
+    )
+
+    shd.set(
+        qn("w:val"),
+        "clear",
+    )
+
+    shd.set(
+        qn("w:color"),
+        "auto",
+    )
+
+    shd.set(
+        qn("w:fill"),
+        hex_color,
+    )
+
+    cell._tc.get_or_add_tcPr().append(
+        shd
+    )
 
 
-def _add_score_bar(doc, label: str, value: int, segments: int = 20):
+def _add_score_bar(
+    doc,
+    label: str,
+    value: int,
+    segments: int = 20,
+):
+
     p = doc.add_paragraph()
-    run = p.add_run(f"{} — {}/100")
+
+    run = p.add_run(
+        f"{label} — {value}/100"
+    )
+
     run.bold = True
 
-    filled = round(segments * max(0, min(100, value)) / 100)
-    fill_color = _band_color_hex(value).lstrip("#")
+    filled = round(
+        segments
+        * max(0, min(100, value))
+        / 100
+    )
 
-    table = doc.add_table(rows=1, cols=segments)
+    fill_color = (
+        _band_color_hex(value)
+        .lstrip("#")
+    )
+
+    table = doc.add_table(
+        rows=1,
+        cols=segments,
+    )
+
     table.autofit = False
 
     for i in range(segments):
-        cell = table.cell(0, i)
+
+        cell = table.cell(
+            0,
+            i,
+        )
+
         cell.width = Cm(0.32)
+
         _set_cell_shading(
             cell,
-            fill_color if i < filled else "E5E7F0",
+            (
+                fill_color
+                if i < filled
+                else "E5E7F0"
+            ),
         )
 
     doc.add_paragraph()
+
+
+def _add_bullets(
+    doc,
+    items,
+    empty_text,
+):
+
+    if not items:
+
+        doc.add_paragraph(
+            empty_text
+        )
+
+        return
+
+    for item in items:
+
+        doc.add_paragraph(
+            str(item),
+            style="List Bullet",
+        )
 
 
 def generate_docx_bytes(
@@ -630,64 +855,162 @@ def generate_docx_bytes(
 ) -> bytes:
 
     doc = Document()
+
     section = doc.sections[0]
 
     section.page_width = Inches(8.5)
     section.page_height = Inches(11)
 
-    header_p = section.header.paragraphs[0]
-    header_run = header_p.add_run(f"{} — {}")
-    header_run.font.size = Pt(9)
-    header_run.font.color.rgb = RGBColor(0x67, 0x6E, 0x7C)
+    header_p = (
+        section
+        .header
+        .paragraphs[0]
+    )
 
-    footer_p = section.footer.paragraphs[0]
-    footer_p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-    footer_p.add_run("Page ").font.size = Pt(9)
-    _add_page_number_field(footer_p)
+    header_run = header_p.add_run(
+        f"{BRAND_NAME} — {REPORT_TITLE}"
+    )
+
+    header_run.font.size = Pt(9)
+
+    header_run.font.color.rgb = RGBColor(
+        0x67,
+        0x6E,
+        0x7C,
+    )
+
+    footer_p = (
+        section
+        .footer
+        .paragraphs[0]
+    )
+
+    footer_p.alignment = (
+        WD_ALIGN_PARAGRAPH.RIGHT
+    )
+
+    footer_p.add_run(
+        "Page "
+    ).font.size = Pt(9)
+
+    _add_page_number_field(
+        footer_p
+    )
 
     title_p = doc.add_paragraph()
-    title_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    title_run = title_p.add_run(BRAND_NAME)
+
+    title_p.alignment = (
+        WD_ALIGN_PARAGRAPH.CENTER
+    )
+
+    title_run = title_p.add_run(
+        BRAND_NAME
+    )
+
     title_run.font.size = Pt(28)
     title_run.font.bold = True
 
     subtitle_p = doc.add_paragraph()
-    subtitle_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    subtitle_run = subtitle_p.add_run(REPORT_TITLE)
+
+    subtitle_p.alignment = (
+        WD_ALIGN_PARAGRAPH.CENTER
+    )
+
+    subtitle_run = subtitle_p.add_run(
+        REPORT_TITLE
+    )
+
     subtitle_run.font.size = Pt(14)
-    subtitle_run.font.color.rgb = RGBColor(0x63, 0x66, 0xF1)
+
+    subtitle_run.font.color.rgb = RGBColor(
+        0x63,
+        0x66,
+        0xF1,
+    )
 
     doc.add_paragraph()
 
-    name = result.get("name") or "Candidate"
-    email = result.get("email") or "Not provided"
-    generated = datetime.now().strftime("%B %d, %Y  •  %I:%M %p")
+    name = result.get(
+        "name",
+        "Candidate",
+    )
 
-    meta_table = doc.add_table(rows=4, cols=2)
-    meta_table.style = "Light List Accent 1"
+    email = result.get(
+        "email",
+        "Not provided",
+    )
+
+    generated = datetime.now().strftime(
+        "%B %d, %Y  •  %I:%M %p"
+    )
+
+    meta_table = doc.add_table(
+        rows=4,
+        cols=2,
+    )
+
+    meta_table.style = (
+        "Light List Accent 1"
+    )
 
     meta_rows = [
         ("Candidate", name),
         ("Email", email),
-        ("Resume File", resume_filename or "N/A"),
+        (
+            "Resume File",
+            resume_filename or "N/A",
+        ),
         ("Generated", generated),
     ]
 
-    for i, (label, value) in enumerate(meta_rows):
-        meta_table.cell(i, 0).text = label
-        meta_table.cell(i, 1).text = str(value)
+    for i, (
+        label,
+        value,
+    ) in enumerate(meta_rows):
+
+        meta_table.cell(
+            i,
+            0,
+        ).text = label
+
+        meta_table.cell(
+            i,
+            1,
+        ).text = str(value)
 
     doc.add_page_break()
 
-    ats = result.get("ats_score", 0)
-    match = result.get("match_percentage", 0)
-    matching = result.get("matching_skills") or []
-    missing = result.get("missing_skills") or []
+    ats = result.get(
+        "ats_score",
+        0,
+    )
 
-    doc.add_heading("Overview", level=1)
+    match = result.get(
+        "match_percentage",
+        0,
+    )
 
-    kpi_table = doc.add_table(rows=2, cols=4)
-    kpi_table.style = "Light Grid Accent 1"
+    matching = result.get(
+        "matching_skills"
+    ) or []
+
+    missing = result.get(
+        "missing_skills"
+    ) or []
+
+    doc.add_heading(
+        "Overview",
+        level=1,
+    )
+
+    kpi_table = doc.add_table(
+        rows=2,
+        cols=4,
+    )
+
+    kpi_table.style = (
+        "Light Grid Accent 1"
+    )
 
     headers = [
         "ATS Score",
@@ -698,366 +1021,1281 @@ def generate_docx_bytes(
 
     values = [
         str(ats),
-        f"{}%",
+        f"{match}%",
         str(len(matching)),
         str(len(missing)),
     ]
 
-    for i, header in enumerate(headers):
-        kpi_table.cell(0, i).text = header
+    for i, header in enumerate(
+        headers
+    ):
+        kpi_table.cell(
+            0,
+            i,
+        ).text = header
 
-    for i, value in enumerate(values):
-        kpi_table.cell(1, i).text = value
+    for i, value in enumerate(
+        values
+    ):
+        kpi_table.cell(
+            1,
+            i,
+        ).text = value
 
     doc.add_paragraph()
 
-    _add_score_bar(doc, "ATS Score", ats)
-    _add_score_bar(doc, "Match Percentage", match)
+    _add_score_bar(
+        doc,
+        "ATS Score",
+        ats,
+    )
 
-    doc.add_heading("AI Summary", level=1)
-    doc.add_paragraph(result.get("summary") or "No summary generated.")
+    _add_score_bar(
+        doc,
+        "Match Percentage",
+        match,
+    )
 
-    doc.add_heading("Matching Skills", level=1)
-    if matching:
-        for item in matching:
-            doc.add_paragraph(item, style="List Bullet")
+    doc.add_heading(
+        "AI Summary",
+        level=1,
+    )
+
+    doc.add_paragraph(
+        result.get("summary")
+        or "No summary was generated for this scan."
+    )
+
+    doc.add_heading(
+        "Matching Skills",
+        level=1,
+    )
+
+    _add_bullets(
+        doc,
+        matching,
+        "No matching skills identified.",
+    )
+
+    doc.add_heading(
+        "Missing Skills",
+        level=1,
+    )
+
+    _add_bullets(
+        doc,
+        missing,
+        "No missing skills — full coverage.",
+    )
+
+    doc.add_heading(
+        "Strengths",
+        level=1,
+    )
+
+    _add_bullets(
+        doc,
+        result.get("strengths") or [],
+        "None listed.",
+    )
+
+    doc.add_heading(
+        "Weaknesses",
+        level=1,
+    )
+
+    _add_bullets(
+        doc,
+        result.get("weaknesses") or [],
+        "None listed.",
+    )
+
+    doc.add_heading(
+        "Suggestions",
+        level=1,
+    )
+
+    suggestions = result.get(
+        "suggestions"
+    ) or []
+
+    if suggestions:
+
+        for i, suggestion in enumerate(
+            suggestions,
+            start=1,
+        ):
+
+            doc.add_paragraph(
+                f"{i}. {suggestion}"
+            )
+
     else:
-        doc.add_paragraph("No matching skills identified.")
 
-    doc.add_heading("Missing Skills", level=1)
-    if missing:
-        for item in missing:
-            doc.add_paragraph(item, style="List Bullet")
-    else:
-        doc.add_paragraph("No missing skills.")
-
-    doc.add_heading("Strengths", level=1)
-    for item in result.get("strengths") or []:
-        doc.add_paragraph(item, style="List Bullet")
-
-    doc.add_heading("Weaknesses", level=1)
-    for item in result.get("weaknesses") or []:
-        doc.add_paragraph(item, style="List Bullet")
-
-    doc.add_heading("Suggestions", level=1)
-    for i, item in enumerate(result.get("suggestions") or [], start=1):
-        doc.add_paragraph(f"{}. {}")
+        doc.add_paragraph(
+            "None listed."
+        )
 
     buffer = io.BytesIO()
+
     doc.save(buffer)
+
     buffer.seek(0)
+
     return buffer.getvalue()
 
 
-# =====================================================================
+# ============================================================
 # OPTIMIZED RESUME PDF
-# =====================================================================
+# ============================================================
 
 def generate_optimized_resume_pdf(
-    data: dict,
+    optimized: dict,
     candidate_name: str = "",
 ) -> bytes:
-    """
-    Generate ATS-friendly optimized resume PDF.
 
-    Supported schema fields:
-    - name
-    - contact (or email, phone, location, linkedin, portfolio)
-    - professional_summary (or summary)
-    - technical_skills (dict of category -> list/str) or skills (list of dicts)
-    - experience (list of dicts: title, company, duration, location, bullets)
-    - projects (list of dicts: name, duration, technologies, bullets)
-    - education (list of dicts: degree, institution, dates, location)
-    - certifications (list of str or dicts)
+    """
+    IMPORTANT:
+
+    This function does NOT optimize anything.
+
+    It ONLY renders the already optimized resume.
+
+    The SAME `optimized` dictionary displayed in Streamlit
+    should be passed here.
+
+    Therefore:
+
+    Browser Preview == Downloaded PDF
     """
 
-    if not isinstance(data, dict):
-        data = {}
+    body_font, bold_font = _register_fonts()
+
+    styles = _build_styles(
+        body_font,
+        bold_font,
+    )
+
+    # --------------------------------------------------------
+    # RESUME STYLES
+    # --------------------------------------------------------
+
+    heading_style = ParagraphStyle(
+        "ResumeHeading",
+        fontName=bold_font,
+        fontSize=12,
+        leading=16,
+        textColor=colors.HexColor(
+            "#14161B"
+        ),
+        spaceBefore=14,
+        spaceAfter=6,
+    )
+
+    name_style = ParagraphStyle(
+        "ResumeName",
+        fontName=bold_font,
+        fontSize=20,
+        leading=25,
+        textColor=colors.HexColor(
+            "#14161B"
+        ),
+        alignment=TA_CENTER,
+        spaceAfter=4,
+    )
+
+    role_style = ParagraphStyle(
+        "ResumeRole",
+        fontName=body_font,
+        fontSize=10,
+        leading=14,
+        textColor=colors.HexColor(
+            "#6366F1"
+        ),
+        alignment=TA_CENTER,
+        spaceAfter=10,
+    )
+
+    entry_title_style = ParagraphStyle(
+        "EntryTitle",
+        fontName=bold_font,
+        fontSize=10.5,
+        leading=14,
+        textColor=colors.HexColor(
+            "#14161B"
+        ),
+        spaceBefore=8,
+    )
+
+    entry_meta_style = ParagraphStyle(
+        "EntryMeta",
+        fontName=body_font,
+        fontSize=9.5,
+        leading=13,
+        textColor=colors.HexColor(
+            "#6B7280"
+        ),
+        spaceAfter=4,
+    )
+
+    # --------------------------------------------------------
+    # DOCUMENT
+    # --------------------------------------------------------
 
     buffer = io.BytesIO()
 
     doc = SimpleDocTemplate(
         buffer,
         pagesize=LETTER,
-        rightMargin=45,
-        leftMargin=45,
-        topMargin=42,
-        bottomMargin=45,
+        topMargin=0.65 * inch,
+        bottomMargin=0.65 * inch,
+        leftMargin=0.7 * inch,
+        rightMargin=0.7 * inch,
         title=(
-            f"{candidate_name or data.get('name') or 'Candidate'}"
+            f"{candidate_name or optimized.get('name', 'Candidate')}"
             " - Optimized Resume"
         ),
     )
 
-    styles = getSampleStyleSheet()
-
-    name_style = ParagraphStyle(
-        "OptimizedResumeName",
-        parent=styles["Title"],
-        fontName="Helvetica-Bold",
-        fontSize=20,
-        leading=24,
-        spaceAfter=4,
-        alignment=TA_LEFT,
-        textColor=colors.HexColor("#1A365D"),
-    )
-
-    contact_style = ParagraphStyle(
-        "OptimizedResumeContact",
-        parent=styles["Normal"],
-        fontName="Helvetica",
-        fontSize=8.8,
-        leading=11,
-        textColor=colors.HexColor("#555555"),
-        spaceAfter=6,
-    )
-
-    section_style = ParagraphStyle(
-        "OptimizedResumeSection",
-        parent=styles["Heading2"],
-        fontName="Helvetica-Bold",
-        fontSize=11,
-        leading=14,
-        spaceBefore=8,
-        spaceAfter=4,
-        textColor=colors.HexColor("#1A365D"),
-    )
-
-    body_style = ParagraphStyle(
-        "OptimizedResumeBody",
-        parent=styles["Normal"],
-        fontName="Helvetica",
-        fontSize=9.2,
-        leading=12.5,
-        textColor=colors.HexColor("#2D3748"),
-        spaceAfter=3,
-    )
-
-    bullet_style = ParagraphStyle(
-        "OptimizedResumeBullet",
-        parent=body_style,
-        leftIndent=12,
-        firstLineIndent=-7,
-        spaceAfter=2,
-    )
-
-    entry_heading_style = ParagraphStyle(
-        "OptimizedResumeEntryHeading",
-        parent=body_style,
-        fontName="Helvetica",
-        fontSize=9.4,
-        leading=12,
-        spaceBefore=3,
-        spaceAfter=2,
-        textColor=colors.HexColor("#1A202C"),
-    )
-
     story = []
 
-    # 1. CANDIDATE NAME
-    name_val = str(data.get("name") or candidate_name or "Candidate").strip()
-    story.append(Paragraph(html.escape(name_val), name_style))
+    # ========================================================
+    # NAME
+    # ========================================================
 
-    # 2. CONTACT INFORMATION
+    name = (
+        optimized.get("name")
+        or candidate_name
+        or "Candidate"
+    )
+
+    story.append(
+        Paragraph(
+            str(name),
+            name_style,
+        )
+    )
+
+    # ========================================================
+    # CONTACT
+    # ========================================================
+
+    contact = (
+        optimized.get("contact")
+        or {}
+    )
+
     contact_parts = []
-    contact_info = data.get("contact")
-    if isinstance(contact_info, dict):
-        for key in ["email", "phone", "location", "linkedin", "portfolio"]:
-            val = contact_info.get(key)
-            if val and str(val).strip():
-                contact_parts.append(str(val).strip())
 
-    for key in ["email", "phone", "location", "linkedin", "portfolio"]:
-        val = data.get(key)
-        if val and str(val).strip() and str(val).strip() not in contact_parts:
-            contact_parts.append(str(val).strip())
+    for key in [
+        "email",
+        "phone",
+        "location",
+        "linkedin",
+        "portfolio",
+    ]:
+
+        value = contact.get(key)
+
+        if value:
+            contact_parts.append(
+                str(value)
+            )
+
+    # Support old flat format too
+    for key in [
+        "email",
+        "phone",
+        "location",
+        "linkedin",
+        "portfolio",
+    ]:
+
+        if (
+            not contact_parts
+            and optimized.get(key)
+        ):
+            contact_parts.append(
+                str(optimized.get(key))
+            )
 
     if contact_parts:
-        escaped_parts = [html.escape(p) for p in contact_parts]
-        story.append(Paragraph(" | ".join(escaped_parts), contact_style))
+
+        story.append(
+            Paragraph(
+                " | ".join(contact_parts),
+                styles["Muted"],
+            )
+        )
+
+    story.append(
+        Spacer(1, 5)
+    )
 
     story.append(
         HRFlowable(
             width="100%",
-            thickness=0.8,
-            color=colors.HexColor("#CBD5E0"),
-            spaceAfter=6,
-            spaceBefore=2,
+            color=colors.HexColor(
+                "#E1E4EA"
+            ),
+            thickness=1,
         )
     )
 
-    # 3. PROFESSIONAL SUMMARY
-    summary = str(
-        data.get("professional_summary") or data.get("summary") or ""
-    ).strip()
-    if summary:
-        story.append(Paragraph("PROFESSIONAL SUMMARY", section_style))
-        story.append(Paragraph(html.escape(summary), body_style))
+    # ========================================================
+    # SUMMARY
+    # ========================================================
 
-    # 4. TECHNICAL SKILLS
-    tech_skills = data.get("technical_skills")
-    skills_to_render = {}
+    summary = (
+        optimized.get(
+            "professional_summary"
+        )
+        or optimized.get("summary")
+        or ""
+    )
 
-    if isinstance(tech_skills, dict) and tech_skills:
-        for cat, items in tech_skills.items():
-            if not cat or not items:
+    if summary.strip():
+
+        story.append(
+            Paragraph(
+                "PROFESSIONAL SUMMARY",
+                heading_style,
+            )
+        )
+
+        story.append(
+            Paragraph(
+                str(summary),
+                styles["Body"],
+            )
+        )
+
+    # ========================================================
+    # SKILLS
+    # ========================================================
+
+    technical_skills = (
+        optimized.get(
+            "technical_skills"
+        )
+        or {}
+    )
+
+    # Support old format: skills = [{category, skills}]
+    if not technical_skills:
+
+        old_skills = (
+            optimized.get("skills")
+            or []
+        )
+
+        if isinstance(
+            old_skills,
+            list,
+        ):
+
+            converted = {}
+
+            for item in old_skills:
+
+                if not isinstance(
+                    item,
+                    dict,
+                ):
+                    continue
+
+                category = (
+                    item.get("category")
+                    or "Skills"
+                )
+
+                values = (
+                    item.get("skills")
+                    or []
+                )
+
+                if values:
+                    converted[
+                        category
+                    ] = values
+
+            technical_skills = converted
+
+    if technical_skills:
+
+        story.append(
+            Paragraph(
+                "TECHNICAL SKILLS",
+                heading_style,
+            )
+        )
+
+        for category, items in (
+            technical_skills.items()
+        ):
+
+            if not items:
                 continue
-            if isinstance(items, (list, tuple)):
-                clean_items = [str(x).strip() for x in items if str(x).strip()]
-                if clean_items:
-                    skills_to_render[str(cat).strip()] = ", ".join(clean_items)
-            elif isinstance(items, str) and items.strip():
-                skills_to_render[str(cat).strip()] = items.strip()
-    elif isinstance(data.get("skills"), list):
-        for item in data.get("skills"):
-            if isinstance(item, dict):
-                cat = item.get("category") or "Skills"
-                raw_items = item.get("skills") or []
-                if isinstance(raw_items, (list, tuple)):
-                    clean_items = [str(x).strip() for x in raw_items if str(x).strip()]
-                    if clean_items:
-                        skills_to_render[str(cat).strip()] = ", ".join(clean_items)
 
-    if skills_to_render:
-        story.append(Paragraph("TECHNICAL SKILLS", section_style))
-        for cat, skill_str in skills_to_render.items():
-            line = f"<b>{html.escape(cat)}:</b> {html.escape(skill_str)}"
-            story.append(Paragraph(line, body_style))
+            if not isinstance(
+                items,
+                list,
+            ):
+                items = [items]
 
-    # 5. EXPERIENCE
-    experience = data.get("experience")
-    if isinstance(experience, list) and experience:
-        valid_exp = [e for e in experience if isinstance(e, dict)]
-        if valid_exp:
-            story.append(Paragraph("EXPERIENCE", section_style))
-            for entry in valid_exp:
-                title = str(entry.get("title") or "").strip()
-                company = str(entry.get("company") or "").strip()
-                duration = str(entry.get("duration") or entry.get("dates") or "").strip()
-                location = str(entry.get("location") or "").strip()
+            skill_text = ", ".join(
+                str(item)
+                for item in items
+                if str(item).strip()
+            )
 
-                header_parts = []
-                if title and company:
-                    header_parts.append(f"<b>{html.escape(title)}</b> — {html.escape(company)}")
-                elif title:
-                    header_parts.append(f"<b>{html.escape(title)}</b>")
-                elif company:
-                    header_parts.append(f"<b>{html.escape(company)}</b>")
+            if not skill_text:
+                continue
 
-                meta_parts = []
-                if location:
-                    meta_parts.append(html.escape(location))
-                if duration:
-                    meta_parts.append(html.escape(duration))
+            story.append(
+                Paragraph(
+                    f"<b>{category}:</b> "
+                    f"{skill_text}",
+                    styles["Body"],
+                )
+            )
 
-                full_header = " — ".join(header_parts)
-                if meta_parts:
-                    if full_header:
-                        full_header += " | " + " | ".join(meta_parts)
-                    else:
-                        full_header = " | ".join(meta_parts)
+            story.append(
+                Spacer(1, 2)
+            )
 
-                if full_header:
-                    story.append(Paragraph(full_header, entry_heading_style))
+    # ========================================================
+    # EXPERIENCE
+    # ========================================================
 
-                bullets = entry.get("bullets") or entry.get("description") or []
-                if isinstance(bullets, (list, tuple)):
-                    for bullet in bullets:
-                        b_str = str(bullet).strip()
-                        if b_str:
-                            story.append(Paragraph(f"• {html.escape(b_str)}", bullet_style))
-                story.append(Spacer(1, 2))
+    experience = (
+        optimized.get(
+            "experience"
+        )
+        or []
+    )
 
-    # 6. PROJECTS
-    projects = data.get("projects")
-    if isinstance(projects, list) and projects:
-        valid_proj = [p for p in projects if isinstance(p, dict)]
-        if valid_proj:
-            story.append(Paragraph("PROJECTS", section_style))
-            for proj in valid_proj:
-                p_name = str(proj.get("name") or proj.get("title") or "").strip()
-                duration = str(proj.get("duration") or proj.get("dates") or "").strip()
-                tech = proj.get("technologies") or proj.get("tech_stack") or ""
-                if isinstance(tech, (list, tuple)):
-                    tech = ", ".join([str(x).strip() for x in tech if str(x).strip()])
-                tech = str(tech).strip()
+    if experience:
 
-                parts = []
-                if p_name:
-                    parts.append(f"<b>{html.escape(p_name)}</b>")
-                if duration:
-                    parts.append(html.escape(duration))
-                if tech:
-                    parts.append(f"<i>{html.escape(tech)}</i>")
+        story.append(
+            Paragraph(
+                "EXPERIENCE",
+                heading_style,
+            )
+        )
 
-                if parts:
-                    story.append(Paragraph(" | ".join(parts), entry_heading_style))
+        for entry in experience:
 
-                bullets = proj.get("bullets") or proj.get("description") or []
-                if isinstance(bullets, (list, tuple)):
-                    for bullet in bullets:
-                        b_str = str(bullet).strip()
-                        if b_str:
-                            story.append(Paragraph(f"• {html.escape(b_str)}", bullet_style))
-                story.append(Spacer(1, 2))
+            if not isinstance(
+                entry,
+                dict,
+            ):
+                continue
 
-    # 7. EDUCATION
-    education = data.get("education")
-    if isinstance(education, list) and education:
-        valid_edu = [e for e in education if isinstance(e, dict)]
-        if valid_edu:
-            story.append(Paragraph("EDUCATION", section_style))
-            for item in valid_edu:
-                degree = str(item.get("degree") or "").strip()
-                institution = str(item.get("institution") or "").strip()
-                dates = str(item.get("dates") or item.get("duration") or "").strip()
-                location = str(item.get("location") or "").strip()
+            title = (
+                entry.get("title")
+                or ""
+            )
 
-                parts = []
-                if degree:
-                    parts.append(f"<b>{html.escape(degree)}</b>")
-                if institution:
-                    parts.append(html.escape(institution))
-                if dates:
-                    parts.append(html.escape(dates))
-                if location:
-                    parts.append(html.escape(location))
+            company = (
+                entry.get("company")
+                or ""
+            )
 
-                if parts:
-                    story.append(Paragraph(" | ".join(parts), body_style))
+            duration = (
+                entry.get("duration")
+                or entry.get("dates")
+                or ""
+            )
 
-    # 8. CERTIFICATIONS
-    certifications = data.get("certifications")
-    if isinstance(certifications, (list, tuple)) and certifications:
-        clean_certs = []
+            header_parts = [
+                str(x)
+                for x in [
+                    title,
+                    company,
+                ]
+                if x
+            ]
+
+            if header_parts:
+
+                story.append(
+                    Paragraph(
+                        " — ".join(
+                            header_parts
+                        ),
+                        entry_title_style,
+                    )
+                )
+
+            if duration:
+
+                story.append(
+                    Paragraph(
+                        str(duration),
+                        entry_meta_style,
+                    )
+                )
+
+            bullets = (
+                entry.get("bullets")
+                or []
+            )
+
+            for bullet in bullets:
+
+                if not str(
+                    bullet
+                ).strip():
+                    continue
+
+                story.append(
+                    Paragraph(
+                        f"•&nbsp;&nbsp;{bullet}",
+                        styles["Body"],
+                    )
+                )
+
+            story.append(
+                Spacer(1, 4)
+            )
+
+    # ========================================================
+    # PROJECTS
+    # ========================================================
+
+    projects = (
+        optimized.get(
+            "projects"
+        )
+        or []
+    )
+
+    if projects:
+
+        story.append(
+            Paragraph(
+                "PROJECTS",
+                heading_style,
+            )
+        )
+
+        for project in projects:
+
+            if not isinstance(
+                project,
+                dict,
+            ):
+                continue
+
+            project_name = (
+                project.get("name")
+                or ""
+            )
+
+            if project_name:
+
+                story.append(
+                    Paragraph(
+                        str(project_name),
+                        entry_title_style,
+                    )
+                )
+
+            duration = (
+                project.get("duration")
+                or ""
+            )
+
+            tech_stack = (
+                project.get(
+                    "tech_stack"
+                )
+                or project.get(
+                    "technologies"
+                )
+                or []
+            )
+
+            if not isinstance(
+                tech_stack,
+                list,
+            ):
+                tech_stack = [
+                    tech_stack
+                ]
+
+            meta_parts = []
+
+            if duration:
+                meta_parts.append(
+                    str(duration)
+                )
+
+            if tech_stack:
+                meta_parts.append(
+                    ", ".join(
+                        str(x)
+                        for x in tech_stack
+                        if str(x).strip()
+                    )
+                )
+
+            if meta_parts:
+
+                story.append(
+                    Paragraph(
+                        " | ".join(
+                            meta_parts
+                        ),
+                        entry_meta_style,
+                    )
+                )
+
+            bullets = (
+                project.get(
+                    "bullets"
+                )
+                or []
+            )
+
+            for bullet in bullets:
+
+                if not str(
+                    bullet
+                ).strip():
+                    continue
+
+                story.append(
+                    Paragraph(
+                        f"•&nbsp;&nbsp;{bullet}",
+                        styles["Body"],
+                    )
+                )
+
+            story.append(
+                Spacer(1, 4)
+            )
+
+    # ========================================================
+    # EDUCATION
+    # ========================================================
+
+    education = (
+        optimized.get(
+            "education"
+        )
+        or []
+    )
+
+    if education:
+
+        story.append(
+            Paragraph(
+                "EDUCATION",
+                heading_style,
+            )
+        )
+
+        for entry in education:
+
+            if not isinstance(
+                entry,
+                dict,
+            ):
+                continue
+
+            degree = (
+                entry.get("degree")
+                or ""
+            )
+
+            institution = (
+                entry.get("institution")
+                or ""
+            )
+
+            dates = (
+                entry.get("dates")
+                or entry.get("duration")
+                or ""
+            )
+
+            line_parts = [
+                str(x)
+                for x in [
+                    degree,
+                    institution,
+                ]
+                if x
+            ]
+
+            if line_parts:
+
+                story.append(
+                    Paragraph(
+                        " — ".join(
+                            line_parts
+                        ),
+                        entry_title_style,
+                    )
+                )
+
+            if dates:
+
+                story.append(
+                    Paragraph(
+                        str(dates),
+                        entry_meta_style,
+                    )
+                )
+
+    # ========================================================
+    # CERTIFICATIONS
+    # ========================================================
+
+    certifications = (
+        optimized.get(
+            "certifications"
+        )
+        or []
+    )
+
+    if certifications:
+
+        story.append(
+            Paragraph(
+                "CERTIFICATIONS",
+                heading_style,
+            )
+        )
+
         for cert in certifications:
-            if isinstance(cert, str) and cert.strip():
-                clean_certs.append(cert.strip())
-            elif isinstance(cert, dict):
-                c_name = cert.get("name") or cert.get("title") or ""
-                if c_name:
-                    clean_certs.append(str(c_name).strip())
 
-        if clean_certs:
-            story.append(Paragraph("CERTIFICATIONS", section_style))
-            for cert in clean_certs:
-                story.append(Paragraph(f"• {html.escape(cert)}", bullet_style))
+            story.append(
+                Paragraph(
+                    f"•&nbsp;&nbsp;{cert}",
+                    styles["Body"],
+                )
+            )
 
-    # FOOTER
-    def footer(canvas, document):
-        canvas.saveState()
-        canvas.setFont("Helvetica", 8)
-        footer_name = candidate_name or data.get("name") or "Candidate"
-        canvas.setFillColor(colors.HexColor("#777777"))
-        canvas.drawString(45, 25, f"{} — Optimized Resume")
-        canvas.drawRightString(LETTER[0] - 45, 25, f"Page {document.page}")
-        canvas.restoreState()
+    # ========================================================
+    # ACHIEVEMENTS
+    # ========================================================
+
+    achievements = (
+        optimized.get(
+            "achievements"
+        )
+        or []
+    )
+
+    if achievements:
+
+        story.append(
+            Paragraph(
+                "ACHIEVEMENTS",
+                heading_style,
+            )
+        )
+
+        for achievement in achievements:
+
+            story.append(
+                Paragraph(
+                    f"•&nbsp;&nbsp;{achievement}",
+                    styles["Body"],
+                )
+            )
+
+    # ========================================================
+    # BUILD PDF
+    # ========================================================
 
     doc.build(
         story,
-        onFirstPage=footer,
-        onLaterPages=footer,
+        canvasmaker=functools.partial(
+            _NumberedCanvas,
+            footer_label=(
+                f"{name} — Optimized Resume"
+            ),
+        ),
     )
 
     buffer.seek(0)
+
+    return buffer.getvalue()
+
+
+# ============================================================
+# OPTIMIZED RESUME DOCX
+# ============================================================
+
+def generate_resume_docx(
+    optimized: dict,
+) -> bytes:
+
+    """
+    Generates DOCX from the SAME optimized dictionary.
+    """
+
+    doc = Document()
+
+    for section in doc.sections:
+
+        section.top_margin = Inches(
+            0.65
+        )
+
+        section.bottom_margin = Inches(
+            0.65
+        )
+
+        section.left_margin = Inches(
+            0.7
+        )
+
+        section.right_margin = Inches(
+            0.7
+        )
+
+    # --------------------------------------------------------
+    # NAME
+    # --------------------------------------------------------
+
+    name = (
+        optimized.get("name")
+        or "Candidate"
+    )
+
+    p_name = doc.add_paragraph()
+
+    p_name.alignment = (
+        WD_ALIGN_PARAGRAPH.CENTER
+    )
+
+    r_name = p_name.add_run(
+        str(name)
+    )
+
+    r_name.font.size = Pt(18)
+    r_name.font.bold = True
+
+    # --------------------------------------------------------
+    # CONTACT
+    # --------------------------------------------------------
+
+    contact = (
+        optimized.get("contact")
+        or {}
+    )
+
+    contact_parts = []
+
+    for key in [
+        "email",
+        "phone",
+        "location",
+        "linkedin",
+        "portfolio",
+    ]:
+
+        value = contact.get(key)
+
+        if value:
+            contact_parts.append(
+                str(value)
+            )
+
+    if contact_parts:
+
+        p_contact = (
+            doc.add_paragraph()
+        )
+
+        p_contact.alignment = (
+            WD_ALIGN_PARAGRAPH.CENTER
+        )
+
+        p_contact.add_run(
+            " | ".join(
+                contact_parts
+            )
+        )
+
+    # --------------------------------------------------------
+    # SECTION HELPER
+    # --------------------------------------------------------
+
+    def add_section_title(title):
+
+        p = doc.add_paragraph()
+
+        p.paragraph_format.space_before = Pt(
+            9
+        )
+
+        p.paragraph_format.space_after = Pt(
+            2
+        )
+
+        r = p.add_run(
+            title.upper()
+        )
+
+        r.bold = True
+
+    # --------------------------------------------------------
+    # SUMMARY
+    # --------------------------------------------------------
+
+    summary = (
+        optimized.get(
+            "professional_summary"
+        )
+        or optimized.get("summary")
+        or ""
+    )
+
+    if summary:
+
+        add_section_title(
+            "Professional Summary"
+        )
+
+        doc.add_paragraph(
+            str(summary)
+        )
+
+    # --------------------------------------------------------
+    # SKILLS
+    # --------------------------------------------------------
+
+    technical_skills = (
+        optimized.get(
+            "technical_skills"
+        )
+        or {}
+    )
+
+    if technical_skills:
+
+        add_section_title(
+            "Technical Skills"
+        )
+
+        for category, items in (
+            technical_skills.items()
+        ):
+
+            if not items:
+                continue
+
+            if not isinstance(
+                items,
+                list,
+            ):
+                items = [items]
+
+            p = doc.add_paragraph()
+
+            r = p.add_run(
+                f"{category}: "
+            )
+
+            r.bold = True
+
+            p.add_run(
+                ", ".join(
+                    str(x)
+                    for x in items
+                    if str(x).strip()
+                )
+            )
+
+    # --------------------------------------------------------
+    # EXPERIENCE
+    # --------------------------------------------------------
+
+    experience = (
+        optimized.get(
+            "experience"
+        )
+        or []
+    )
+
+    if experience:
+
+        add_section_title(
+            "Experience"
+        )
+
+        for exp in experience:
+
+            if not isinstance(
+                exp,
+                dict,
+            ):
+                continue
+
+            title = (
+                exp.get("title")
+                or ""
+            )
+
+            company = (
+                exp.get("company")
+                or ""
+            )
+
+            duration = (
+                exp.get("duration")
+                or exp.get("dates")
+                or ""
+            )
+
+            parts = [
+                str(x)
+                for x in [
+                    title,
+                    company,
+                ]
+                if x
+            ]
+
+            heading = " — ".join(
+                parts
+            )
+
+            if duration:
+
+                heading += (
+                    f" ({duration})"
+                )
+
+            if heading:
+
+                p = doc.add_paragraph()
+
+                r = p.add_run(
+                    heading
+                )
+
+                r.bold = True
+
+            for bullet in (
+                exp.get("bullets")
+                or []
+            ):
+
+                doc.add_paragraph(
+                    str(bullet),
+                    style="List Bullet",
+                )
+
+    # --------------------------------------------------------
+    # PROJECTS
+    # --------------------------------------------------------
+
+    projects = (
+        optimized.get(
+            "projects"
+        )
+        or []
+    )
+
+    if projects:
+
+        add_section_title(
+            "Projects"
+        )
+
+        for project in projects:
+
+            if not isinstance(
+                project,
+                dict,
+            ):
+                continue
+
+            project_name = (
+                project.get("name")
+                or ""
+            )
+
+            tech_stack = (
+                project.get(
+                    "tech_stack"
+                )
+                or project.get(
+                    "technologies"
+                )
+                or []
+            )
+
+            if not isinstance(
+                tech_stack,
+                list,
+            ):
+                tech_stack = [
+                    tech_stack
+                ]
+
+            heading = str(
+                project_name
+            )
+
+            if tech_stack:
+
+                heading += (
+                    " | "
+                    + ", ".join(
+                        str(x)
+                        for x in tech_stack
+                        if str(x).strip()
+                    )
+                )
+
+            if heading:
+
+                p = doc.add_paragraph()
+
+                r = p.add_run(
+                    heading
+                )
+
+                r.bold = True
+
+            for bullet in (
+                project.get("bullets")
+                or []
+            ):
+
+                doc.add_paragraph(
+                    str(bullet),
+                    style="List Bullet",
+                )
+
+    # --------------------------------------------------------
+    # EDUCATION
+    # --------------------------------------------------------
+
+    education = (
+        optimized.get(
+            "education"
+        )
+        or []
+    )
+
+    if education:
+
+        add_section_title(
+            "Education"
+        )
+
+        for edu in education:
+
+            if not isinstance(
+                edu,
+                dict,
+            ):
+                continue
+
+            degree = (
+                edu.get("degree")
+                or ""
+            )
+
+            institution = (
+                edu.get("institution")
+                or ""
+            )
+
+            dates = (
+                edu.get("dates")
+                or edu.get("duration")
+                or ""
+            )
+
+            parts = [
+                str(x)
+                for x in [
+                    degree,
+                    institution,
+                ]
+                if x
+            ]
+
+            line = " — ".join(
+                parts
+            )
+
+            if dates:
+
+                line += (
+                    f" ({dates})"
+                )
+
+            doc.add_paragraph(
+                line
+            )
+
+    # --------------------------------------------------------
+    # CERTIFICATIONS
+    # --------------------------------------------------------
+
+    certifications = (
+        optimized.get(
+            "certifications"
+        )
+        or []
+    )
+
+    if certifications:
+
+        add_section_title(
+            "Certifications"
+        )
+
+        for cert in certifications:
+
+            doc.add_paragraph(
+                str(cert),
+                style="List Bullet",
+            )
+
+    # --------------------------------------------------------
+    # ACHIEVEMENTS
+    # --------------------------------------------------------
+
+    achievements = (
+        optimized.get(
+            "achievements"
+        )
+        or []
+    )
+
+    if achievements:
+
+        add_section_title(
+            "Achievements"
+        )
+
+        for achievement in achievements:
+
+            doc.add_paragraph(
+                str(achievement),
+                style="List Bullet",
+            )
+
+    # --------------------------------------------------------
+    # RETURN
+    # --------------------------------------------------------
+
+    buffer = io.BytesIO()
+
+    doc.save(buffer)
+
+    buffer.seek(0)
+
     return buffer.getvalue()

@@ -137,7 +137,7 @@ def _remove_duplicate_projects(data):
         company = exp.get("company", "")
         title_norm = _normalize(title)
         comp_norm = _normalize(company)
-        exp_comb = _normalize(f"{} {}")
+        exp_comb = _normalize(f"{title} {company}")
 
         is_duplicate = False
 
@@ -187,12 +187,12 @@ You MUST optimize the resume using ONLY information present in the ORIGINAL RESU
 ==========================================================
 ORIGINAL RESUME
 ==========================================================
-{}
+{resume_text}
 
 ==========================================================
 JOB DESCRIPTION
 ==========================================================
-{}
+{job_description}
 
 ==========================================================
 EXISTING ATS ANALYSIS
@@ -268,7 +268,7 @@ Return complete JSON only.
 """
 
     response = client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
+       model="openai/gpt-oss-120b",
         messages=[
             {
                 "role": "system",
